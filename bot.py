@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 import scanner as S
 from delta_client import PROD, DeltaClient, DeltaError, UncertainError
 from exchanges import DeltaExchange
-from risk import Risk, plan_trade
+from risk import Risk, plan_trade, target_price
 
 IST = timezone(timedelta(hours=5, minutes=30))
 TF_MIN = 15
@@ -159,6 +159,9 @@ class Bot:
         if plan is None:
             log.info("skip %s signal: %s", sig["side"], why)
             return "skip_risk"
+        if r.target_equity_pct > 0:
+            sig["target"] = target_price(equity, side, mark, plan.lots, r.target_equity_pct,
+                                         getattr(self.ex, "contract_value", 0.001))
         cid = f"s{int(sig['bar_open'])}{'L' if side == 1 else 'S'}"
         self.st.d["in_trade"] = {"side": side, "lots": plan.lots, "entry": mark, "stop": sig["stop"],
                                  "target": sig["target"], "kind": sig["kind"], "opened": now,

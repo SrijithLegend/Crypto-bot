@@ -6,7 +6,7 @@ import bot as BOT
 from bot import Bot, Config, State
 from delta_client import DeltaClient, DeltaError, UncertainError
 from exchanges import DeltaExchange
-from risk import MAX_LEVERAGE, Risk, plan_trade, TAKER
+from risk import MAX_LEVERAGE, Risk, plan_trade, TAKER, target_price
 
 BAR = 900
 NOW0 = 1_800_000_000 // BAR * BAR + 5 * BAR          # a candle boundary
@@ -181,7 +181,7 @@ def test_waits_until_candle_closed(mkbot):
     assert ex.orders == []
 
 def test_signal_places_exactly_one_bracketed_order_and_never_repeats(mkbot):
-    df, s = signal_df(); b, ex = mkbot(df)
+    df, s = signal_df(); b, ex = mkbot(df, risk=Risk(max_stop_pct=50, risk_per_trade_pct=50, margin_use_pct=100, target_equity_pct=0))
     assert b.step(NOW0 + 6) == "entered"
     o = ex.orders[0]
     assert o["side"] == (1 if s.side == "LONG" else -1) and o["lots"] >= 1
@@ -270,3 +270,16 @@ def test_live_requires_confirmation(monkeypatch):
 def test_config_rejects_200x(tmp_path):
     p = tmp_path / "c.json"; p.write_text(json.dumps({"risk": {"leverage": 200}}))
     with pytest.raises(ValueError): Config.load(str(p))
+
+
+def test_target_price_nets_pct_of_equity():
+    for side in (1, -1):
+        t = target_price(100.0, side, 80000.0, 10, 20.0)
+        net = side * (t - 80000.0) * 10 * 0.001 - 10 * 0.001 * (80000.0 * 2 * TAKER + 2 * 0.5)
+        assert abs(net - 20.0) < 1e-9
+    assert target_price(100.0, 1, 80000.0, 10, 20.0) > 80000.0 > target_price(100.0, -1, 80000.0, 10, 20.0)
+
+def test_bot_uses_equity_target(mkbot):
+    df, _ = signal_df(); b, ex = mkbot(df)
+    b.step(NOW0 + 6); o = ex.orders[0]; t = b.st["in_trade"]
+    assert o["target"] == t["target"] == pytest.approx(target_price(12.94, o["side"], ex.mark, o["lots"], 20.0))

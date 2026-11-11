@@ -15,6 +15,7 @@ class Risk:
     leverage: int = 10
     risk_per_trade_pct: float = 8.0      # max loss at the stop, % of equity (1 lot is ~6-7 % at Rs1,100)
     margin_use_pct: float = 75.0         # max % of equity used as margin (1 lot @10x ~ 62 % at Rs1,100)
+    target_equity_pct: float = 20.0      # take profit when the trade nets this % of equity (0 = use scanner's 2R target)
     daily_loss_limit_pct: float = 15.0   # stop opening trades for the day below this
     max_consecutive_losses: int = 4      # then halt until you run `reset-halt`
     min_liq_buffer: float = 2.0          # liquidation distance must be >= this x stop distance
@@ -32,6 +33,12 @@ class Risk:
                 raise ValueError(f"{name} must be > 0")
         if self.margin_use_pct > 100:
             raise ValueError("margin_use_pct must be <= 100")
+
+
+def target_price(equity: float, side: int, entry: float, lots: int, pct: float, contract_value: float = 0.001) -> float:
+    """Price at which the trade nets `pct` % of equity after round-trip fees and slippage."""
+    dist = equity * pct / 100 / (lots * contract_value) + entry * 2 * TAKER + 2 * SLIP
+    return entry + side * dist
 
 
 @dataclass(frozen=True)
