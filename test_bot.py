@@ -5,7 +5,7 @@ from test_scanner import synth
 import bot as BOT
 from bot import Bot, Config, State
 from delta_client import DeltaClient, DeltaError, UncertainError
-from exchanges import DeltaExchange, PaperExchange, walk_exit
+from exchanges import DeltaExchange
 from risk import MAX_LEVERAGE, Risk, plan_trade, TAKER
 
 BAR = 900
@@ -58,7 +58,7 @@ def mkbot(tmp_path):
     def make(df, risk=None, balance=12.94, mark=None):
         cfg = Config(risk=risk or Risk(max_stop_pct=50, risk_per_trade_pct=50, margin_use_pct=100))
         ex = FakeEx(df, balance, mark if mark is not None else float(df["close"].iloc[-1]))
-        b = Bot(ex, cfg, "paper", State(str(tmp_path / "s.json")), stop_file=str(tmp_path / "STOP"),
+        b = Bot(ex, cfg, "live", State(str(tmp_path / "s.json")), stop_file=str(tmp_path / "STOP"),
                 journal=str(tmp_path / "t.csv"), sleep=lambda s: None)
         return b, ex
     return make
@@ -214,17 +214,15 @@ def test_stop_file_blocks(mkbot, tmp_path):
     (tmp_path / "STOP").write_text("x")
     assert b.step(NOW0 + 6) == "stop_file" and ex.orders == []
 
-def test_daily_loss_limit_and_max_trades(mkbot):
+def test_daily_loss_limit(mkbot):
     df, _ = signal_df(); b, ex = mkbot(df)
     b._roll_day(NOW0); b.st.d["day_start_equity"] = 20.0       # equity 12.94 = -35 % today
     assert b.step(NOW0 + 6) == "daily_loss_limit" and ex.orders == []
-    b2, ex2 = mkbot(df); b2.st.d.update({"last_bar": 0, "day_start_equity": None}); b2._roll_day(NOW0); b2.st.d["trades_today"] = 3
-    assert b2.step(NOW0 + 6) == "max_trades_day" and ex2.orders == []
 
 def test_day_rolls_in_ist(mkbot):
     df, _ = signal_df(); b, ex = mkbot(df)
-    b.st.d.update({"day": "1999-01-01", "trades_today": 3})
-    b._roll_day(NOW0); assert b.st["trades_today"] == 0 and b.st["day"] != "1999-01-01"
+    b.st.d.update({"day": "1999-01-01", "day_start_equity": 5.0})
+    b._roll_day(NOW0); assert b.st["day_start_equity"] is None and b.st["day"] != "1999-01-01"
 
 def test_consecutive_losses_halt_and_reset(mkbot):
     df, _ = signal_df(); b, ex = mkbot(df, risk=Risk(max_stop_pct=50, risk_per_trade_pct=50, margin_use_pct=100, max_consecutive_losses=2))
@@ -251,7 +249,7 @@ def test_uncertain_order_halts_and_keeps_intent(mkbot):
 def test_rejected_order_clears_intent(mkbot):
     df, _ = signal_df(); b, ex = mkbot(df); ex.raise_on_order = DeltaError("insufficient_margin")
     assert b.step(NOW0 + 6) == "rejected"
-    assert b.st["in_trade"] is None and b.st["trades_today"] == 0 and not b.halted()
+    assert b.st["in_trade"] is None and not b.halted()
 
 def test_emergency_close_if_bracket_missing(mkbot):
     df, s = signal_df(); b, ex = mkbot(df)
@@ -272,60 +270,3 @@ def test_live_requires_confirmation(monkeypatch):
 def test_config_rejects_200x(tmp_path):
     p = tmp_path / "c.json"; p.write_text(json.dumps({"risk": {"leverage": 200}}))
     with pytest.raises(ValueError): Config.load(str(p))
-
-
-# ------------------------------------------------------------------ paper exchange
-class PubFake:
-    def __init__(self, c1m, mark): self.c1m, self.mark = c1m, mark
-    def get_ticker(self, s): return {"mark_price": self.mark}
-    def get_candles(self, s, res, start, end):
-        d = self.c1m
-        t = d["time"].map(lambda x: x.timestamp())
-        return d[(t >= start) & (t < end)].reset_index(drop=True)
-
-def c1m(start, rows):
-    return pd.DataFrame({"time": pd.to_datetime([start + 60 * i for i in range(len(rows))], unit="s", utc=True),
-                         "open": [r[0] for r in rows], "high": [r[1] for r in rows],
-                         "low": [r[2] for r in rows], "close": [r[3] for r in rows], "volume": 1.0})
-
-def paper(tmp_path, rows, mark=80000.0, now=None, lev=10, bal=100.0):
-    t0 = 1_800_000_000 // 60 * 60
-    pub = PubFake(c1m(t0 + 60, rows), mark)
-    clock = {"t": t0 + 5}
-    ex = PaperExchange(pub, str(tmp_path / "p.json"), start_usd=bal, leverage=lev, time_fn=lambda: clock["t"])
-    return ex, clock, t0
-
-def test_paper_target_pnl(tmp_path):
-    rows = [(80000, 80100, 79950, 80050)] * 2 + [(80050, 80900, 80000, 80800)]
-    ex, clk, t0 = paper(tmp_path, rows)
-    ex.place_entry(1, 10, 79200.0, 80800.0, "c")
-    entry = 80000.5; clk["t"] = t0 + 60 * 6
-    assert ex.position() == (0, 0.0)
-    notional = 10 * 0.001 * entry
-    exp = 10 * 0.001 * (80800 - entry) - notional * TAKER - 10 * 0.001 * 80800 * TAKER
-    assert abs(ex.balance() - (100 + exp)) < 1e-9
-
-def test_paper_stop_first_when_both_touched(tmp_path):
-    rows = [(80000, 81000, 79000, 80000)]
-    ex, clk, t0 = paper(tmp_path, rows)
-    ex.place_entry(1, 10, 79200.0, 80800.0, "c"); clk["t"] = t0 + 200
-    assert ex.position() == (0, 0.0) and ex.balance() < 100
-
-def test_paper_liquidation_at_20x_loses_margin(tmp_path):
-    rows = [(80000, 80010, 75500, 75600)]      # -5.6 % : beyond the 4.75 % liquidation distance at 20x
-    ex, clk, t0 = paper(tmp_path, rows, lev=20)
-    ex.place_entry(1, 10, 74000.0, 90000.0, "c"); clk["t"] = t0 + 200
-    ex.balance()
-    margin = 10 * 0.001 * 80000.5 / 20
-    assert abs(ex.st["balance"] - (100 - margin - 10 * 0.001 * 80000.5 * TAKER)) < 1e-9
-
-def test_paper_state_survives_restart(tmp_path):
-    rows = [(80000, 80100, 79950, 80050)] * 3
-    ex, clk, t0 = paper(tmp_path, rows)
-    ex.place_entry(-1, 5, 81000.0, 79000.0, "c")
-    ex2 = PaperExchange(ex.public, str(tmp_path / "p.json"), time_fn=lambda: clk["t"])
-    assert ex2.position()[0] == -5
-
-def test_walk_exit_gap_through_stop_fills_at_open():
-    o = np.array([100., 95.]); h = np.array([100.1, 95.5]); l = np.array([99.9, 94.])
-    assert walk_exit(1, 100, 98, 102, 5, o, h, l) == (1, 95.0, "stop")

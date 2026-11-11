@@ -1,9 +1,8 @@
-"""4-stage strategy bot. Default mode is PAPER (virtual money, real prices, no keys needed).
+"""4-stage strategy bot. LIVE ONLY: real money on Delta Exchange India.
+Needs DELTA_API_KEY, DELTA_API_SECRET and DELTA_LIVE_CONFIRM=I_ACCEPT_THE_RISK in the environment.
 
-  python bot.py run                 # paper
-  python bot.py run --mode testnet  # fake money on Delta's testnet (needs testnet keys)
-  python bot.py run --mode live     # real money; see README for the extra confirmation
-  python bot.py selftest --mode testnet   # check keys/signing/balance/position parsing
+  python bot.py run                 # trade live
+  python bot.py selftest            # check keys/signing/balance/position parsing
   python bot.py status | flatten | reset-halt
 
 Kill switch: create a file named STOP next to bot.py -> no new trades (open position keeps its bracket).
@@ -21,8 +20,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 
 import scanner as S
-from delta_client import PROD, TESTNET, DeltaClient, DeltaError, UncertainError
-from exchanges import DeltaExchange, PaperExchange
+from delta_client import PROD, DeltaClient, DeltaError, UncertainError
+from exchanges import DeltaExchange
 from risk import Risk, plan_trade
 
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -38,7 +37,6 @@ class Config:
     settle_delay: int = 4               # seconds after a candle closes before reading it
     stale_give_up: int = 120            # stop retrying a bar this many seconds after it closed
     poll_seconds: int = 10
-    paper_start_usd: float = 1100 / 85
     risk: Risk = field(default_factory=Risk)
 
     @staticmethod
@@ -53,7 +51,7 @@ class Config:
 
 
 class State:
-    DEFAULT = {"last_bar": 0, "day": "", "day_start_equity": None, "trades_today": 0,
+    DEFAULT = {"last_bar": 0, "day": "", "day_start_equity": None,
                "consecutive_losses": 0, "halted": "", "in_trade": None}
 
     def __init__(self, path="state.json"):
@@ -90,7 +88,7 @@ class Bot:
     def _roll_day(self, now):
         d = self._day(now)
         if self.st["day"] != d:
-            self.st.d.update({"day": d, "trades_today": 0, "day_start_equity": None})
+            self.st.d.update({"day": d, "day_start_equity": None})
             self.st.save()
 
     def _journal(self, row: dict):
@@ -156,9 +154,6 @@ class Bot:
         if dd <= -r.daily_loss_limit_pct:
             log.warning("daily loss limit hit (%.1f%%) - no more trades today", dd)
             return "daily_loss_limit"
-        if self.st["trades_today"] >= r.max_trades_per_day:
-            log.info("skip: max trades/day reached")
-            return "max_trades_day"
         plan, why = plan_trade(equity, side, mark, sig["stop"], sig["target"], r,
                                getattr(self.ex, "contract_value", 0.001))
         if plan is None:
@@ -168,7 +163,6 @@ class Bot:
         self.st.d["in_trade"] = {"side": side, "lots": plan.lots, "entry": mark, "stop": sig["stop"],
                                  "target": sig["target"], "kind": sig["kind"], "opened": now,
                                  "equity_before": equity, "cid": cid}
-        self.st.d["trades_today"] += 1
         self.st.save()                                   # intent is saved BEFORE the order goes out
         log.info("ENTER %s %d lots @~%.1f stop %.1f target %.1f risk %.1f%% equity (%s)",
                  sig["side"], plan.lots, mark, sig["stop"], sig["target"], plan.risk_pct_equity, sig["kind"])
@@ -181,7 +175,6 @@ class Bot:
             return "uncertain"
         except DeltaError as e:
             self.st.d["in_trade"] = None
-            self.st.d["trades_today"] -= 1
             self.st.save()
             log.error("order rejected: %s", e)
             return "rejected"
@@ -259,27 +252,17 @@ class Bot:
 
 # ------------------------------------------------------------------ CLI
 def build_exchange(mode: str, cfg: Config):
-    public = DeltaClient(PROD)
-    if mode == "paper":
-        return PaperExchange(public, leverage=cfg.risk.leverage, start_usd=cfg.paper_start_usd, symbol=cfg.symbol)
-    if mode == "testnet":
-        k, s = os.environ.get("DELTA_TESTNET_API_KEY"), os.environ.get("DELTA_TESTNET_API_SECRET")
-        base = TESTNET
-    else:
-        if os.environ.get("DELTA_LIVE_CONFIRM") != "I_ACCEPT_THE_RISK":
-            sys.exit("Live mode refused: set DELTA_LIVE_CONFIRM=I_ACCEPT_THE_RISK (and read the README first).")
-        k, s = os.environ.get("DELTA_API_KEY"), os.environ.get("DELTA_API_SECRET")
-        base = PROD
+    if os.environ.get("DELTA_LIVE_CONFIRM") != "I_ACCEPT_THE_RISK":
+        sys.exit("Live mode refused: set DELTA_LIVE_CONFIRM=I_ACCEPT_THE_RISK (and read the README first).")
+    k, s = os.environ.get("DELTA_API_KEY"), os.environ.get("DELTA_API_SECRET")
     if not (k and s):
         sys.exit("API key/secret not found in environment variables (see README). Never put them in files.")
-    pub = DeltaClient(base)                      # same environment's product list / tickers
-    return DeltaExchange(DeltaClient(base, k, s), pub, cfg.symbol, cfg.margin_asset)
+    return DeltaExchange(DeltaClient(PROD, k, s), DeltaClient(PROD), cfg.symbol, cfg.margin_asset)
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["run", "selftest", "status", "flatten", "reset-halt"])
-    ap.add_argument("--mode", choices=["paper", "testnet", "live"], default="paper")
     ap.add_argument("--config", default="config.json")
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s",
@@ -294,7 +277,7 @@ def main(argv=None):
         st.save()
         print("halt cleared")
         return
-    ex = build_exchange(a.mode, cfg)
+    ex = build_exchange("live", cfg)
     if a.cmd == "selftest":
         print("balance:", ex.balance(), cfg.margin_asset)
         print("position (signed lots, entry):", ex.position())
@@ -306,7 +289,7 @@ def main(argv=None):
         ex.close_position()
         print("close order sent")
         return
-    Bot(ex, cfg, a.mode, st).run()
+    Bot(ex, cfg, "live", st).run()
 
 
 if __name__ == "__main__":

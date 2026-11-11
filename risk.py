@@ -15,7 +15,6 @@ class Risk:
     leverage: int = 10
     risk_per_trade_pct: float = 8.0      # max loss at the stop, % of equity (1 lot is ~6-7 % at Rs1,100)
     margin_use_pct: float = 75.0         # max % of equity used as margin (1 lot @10x ~ 62 % at Rs1,100)
-    max_trades_per_day: int = 3
     daily_loss_limit_pct: float = 15.0   # stop opening trades for the day below this
     max_consecutive_losses: int = 4      # then halt until you run `reset-halt`
     min_liq_buffer: float = 2.0          # liquidation distance must be >= this x stop distance
