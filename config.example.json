@@ -1,0 +1,14 @@
+{
+  "symbol": "BTCUSD",
+  "margin_asset": "USD",
+  "paper_start_usd": 12.94,
+  "risk": {
+    "leverage": 10,
+    "risk_per_trade_pct": 8.0,
+    "margin_use_pct": 75.0,
+    "max_trades_per_day": 3,
+    "daily_loss_limit_pct": 15.0,
+    "max_consecutive_losses": 4,
+    "max_stop_pct": 3.0
+  }
+}
