@@ -96,6 +96,10 @@ Logs: `bot.log`. Closed trades: `trades.csv`.
 
 Not modelled: funding payments while holding, news, trailing stops.
 
+## Disclaimer
+
+This software is provided "as is", without warranty of any kind. It is for educational and research purposes and is **not financial, investment, legal or tax advice**. Trading leveraged crypto derivatives carries a high risk of total loss, and past or backtested results do not predict future results. The author and contributors accept **no liability** for any loss, damage, missed trade, bug, exchange or API failure, or regulatory consequence arising from its use. You run it entirely at your own risk and are solely responsible for your API keys, your funds, and for complying with the laws, tax rules and exchange terms that apply to you, including whether trading crypto derivatives is permitted where you live. This project is not affiliated with or endorsed by Delta Exchange.
+
 ## Files
 
 `bot.py` loop and CLI - `scanner.py` stages 1-4 and the vote - `funding.py` stage 5 - `risk.py` limits - `exchanges.py` Delta orders and data - `delta_client.py` API - `docs/make_images.py` regenerates the images.
