@@ -1,0 +1,10 @@
+config.json
+STOP
+state.json
+bot.log
+trades.csv
+__pycache__/
+.venv/
+data/
+*.tmp
+.env
