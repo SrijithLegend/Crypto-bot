@@ -6,7 +6,7 @@ import bot as BOT
 from bot import Bot, Config, State
 from delta_client import DeltaClient, DeltaError, UncertainError
 from exchanges import DeltaExchange
-from risk import MAX_LEVERAGE, Risk, plan_trade, TAKER, target_price
+from risk import MAX_LEVERAGE, Risk, plan_trade, SLIP_FRAC, TAKER, target_price
 
 BAR = 900
 NOW0 = 1_800_000_000 // BAR * BAR + 5 * BAR          # a candle boundary
@@ -275,7 +275,7 @@ def test_config_rejects_200x(tmp_path):
 def test_target_price_nets_pct_of_equity():
     for side in (1, -1):
         t = target_price(100.0, side, 80000.0, 10, 20.0)
-        net = side * (t - 80000.0) * 10 * 0.001 - 10 * 0.001 * (80000.0 * 2 * TAKER + 2 * 0.5)
+        net = side * (t - 80000.0) * 10 * 0.001 - 10 * 0.001 * (80000.0 * 2 * TAKER + 2 * 80000.0 * SLIP_FRAC)
         assert abs(net - 20.0) < 1e-9
     assert target_price(100.0, 1, 80000.0, 10, 20.0) > 80000.0 > target_price(100.0, -1, 80000.0, 10, 20.0)
 
@@ -283,3 +283,9 @@ def test_bot_uses_equity_target(mkbot):
     df, _ = signal_df(); b, ex = mkbot(df, Risk(max_stop_pct=50, risk_per_trade_pct=50, margin_use_pct=100, target_equity_pct=20.0))
     b.step(NOW0 + 6); o = ex.orders[0]; t = b.st["in_trade"]
     assert o["target"] == t["target"] == pytest.approx(target_price(12.94, o["side"], ex.mark, o["lots"], 20.0))
+
+
+def test_slippage_scales_with_price():
+    # a $2 coin must not be charged BTC's absolute slippage: extra target distance stays ~ proportional to price
+    cheap = target_price(100.0, 1, 2.0, 1000, 20.0, 1.0) - 2.0 - 100.0 * 0.2 / 1000
+    assert cheap == pytest.approx(2.0 * 2 * TAKER + 2 * 2.0 * SLIP_FRAC)

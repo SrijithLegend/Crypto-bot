@@ -8,7 +8,7 @@ from dataclasses import dataclass
 MAX_LEVERAGE = 20          # hard ceiling in code. Backtest: >=50x is liquidated on most trades.
 TAKER = 0.00045 * 1.18     # 0.0531 % per side incl. 18 % GST (from your own order CSV)
 LIQ_MAINT = 0.0025         # liq distance ~= 1/lev - 0.25 %  (Delta's own 200x warning figure)
-SLIP = 0.5                 # USD
+SLIP_FRAC = 0.00001        # slippage as a fraction of price (~0.7 USD on BTC); scales to any symbol
 
 
 @dataclass(frozen=True)
@@ -55,7 +55,7 @@ class Risk:
 
 def target_price(equity: float, side: int, entry: float, lots: int, pct: float, contract_value: float = 0.001) -> float:
     """Price at which the trade nets `pct` % of equity after round-trip fees and slippage."""
-    dist = equity * pct / 100 / (lots * contract_value) + entry * 2 * TAKER + 2 * SLIP
+    dist = equity * pct / 100 / (lots * contract_value) + entry * 2 * TAKER + 2 * entry * SLIP_FRAC
     return entry + side * dist
 
 
@@ -86,7 +86,7 @@ def plan_trade(equity: float, side: int, entry: float, stop: float, target: floa
     if liq_pct < risk.min_liq_buffer * stop_pct:
         return None, (f"liquidation {liq_pct:.2f}% away is closer than {risk.min_liq_buffer}x the stop "
                       f"({stop_pct:.2f}%) at {risk.leverage}x")
-    risk_per_lot = contract_value * (stop_dist + entry * 2 * TAKER + 2 * SLIP)
+    risk_per_lot = contract_value * (stop_dist + entry * 2 * TAKER + 2 * entry * SLIP_FRAC)
     lots_risk = math.floor(equity * risk.risk_per_trade_pct / 100 / risk_per_lot)
     lots_margin = math.floor(equity * risk.margin_use_pct / 100 * risk.leverage / (contract_value * entry))
     lots = min(lots_risk, lots_margin)
