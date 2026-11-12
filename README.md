@@ -1,100 +1,82 @@
-# 5-Stage BTCUSD Bot (Delta Exchange India)
+# Crypto Bot: a 5-stage BTCUSD trading bot
 
-Scans closed 15-minute BTCUSD candles with five stages. It opens **one trade at a time**, with a stop-loss and take-profit attached on the exchange, but **only when at least two stages agree**.
+A bot that trades Bitcoin (BTCUSD) on **Delta Exchange India**. Every 15 minutes it looks at the latest candle, asks five simple "stages" what they think, and only trades when **at least two agree**.
 
-> **LIVE ONLY: this bot trades real money. There is no paper mode. You can lose everything you put in.**
+> ⚠️ **It uses real money. There is no practice mode. You can lose everything you put in.** Read the [Disclaimer](#disclaimer) before running it.
 
-![Pipeline](docs/pipeline.png)
+![How it works](docs/pipeline.png)
 
-## How it decides
+## How it works (in plain words)
 
-| # | Stage | Votes |
-|---|---|---|
-| 1 | Trend | long in an uptrend (HH+HL), short in a downtrend (LH+LL) |
-| 2 | Break of structure | direction of a close beyond a contact level on this bar |
-| 3 | EMA 20/50/200 | long if close > EMA20 > EMA50 > EMA200 and rising, short for the mirror |
-| 4 | Continuation / reversal | the full scanner signal on this bar |
-| 5 | Funding (contrarian) | funding rank >= 0.90 (longs crowded) votes short; <= 0.10 votes long |
+Think of five advisors. Each one says **long** (price will go up), **short** (price will go down), or **no opinion**.
 
-A trade needs `min_votes` (default **2**) stages on one side, with more votes than the other side. It fires only on the bar where that first becomes true, so a long-lasting trend does not re-enter every candle. If funding data is unavailable, funding simply abstains.
+| Advisor | Says "long" when... |
+|---|---|
+| 1. Trend | price keeps making higher highs and higher lows |
+| 2. Break of structure | price just closed above an important level |
+| 3. Moving averages | the 20/50/200 EMA lines are stacked upward |
+| 4. Continuation / reversal | the main scanner finds a full setup |
+| 5. Funding | too many traders are short (a crowd that is often wrong) |
 
-![Votes](docs/votes.png)
+The bot trades only if **2 or more advisors agree** and fewer disagree.
 
-Stop and target come from the scanner's swing-based geometry (2R). With `target_equity_pct > 0` the target is replaced by a take-profit that nets that % of equity after fees.
+![Vote examples](docs/votes.png)
 
-## Read this first
+Every trade gets a **stop-loss** (exit if it goes wrong) and a **take-profit** (exit when it works), placed on the exchange. Only one trade is open at a time.
 
-- **Backtest (Jan-Oct 2026, 4-stage scanner, no leverage): +0.46% per trade, 48 trades, not statistically proven** (95% range -0.19% to +1.18%). The 2-of-5 vote rule and the funding stage have **not been backtested**.
-- **The +20%-of-equity take-profit at 20x was replayed and lost money** (a 1.11% price move target against ~0.94% median stops). Set `"target_equity_pct": 0` to use the tested 2R target, and consider 5-10x.
-- **Rare trades:** about 7 a month for the 4-stage version. A short run proves nothing.
-- **Leverage is capped at 20x in code** (`MAX_LEVERAGE`). In the backtest 200x was liquidated on 94% of trades.
-- If your PC sleeps, only the exchange's stop protects you; the software backup (flatten 0.2% past the stop) needs the bot running.
-- With a tiny balance one lot may need more margin than you have, so every signal is skipped.
+## Before you run it
 
-## Setup
+- It has **not been proven to make money**. The older 4-stage version made +0.46% per trade over 48 trades, which is too few to be sure. The "2 of 5" rule and the funding stage have **not been backtested**.
+- The current `config.json` uses **20x leverage** and a **+20% take-profit**. When I replayed that on past data it **lost money**. Safer: `"target_equity_pct": 0` and 5-10x leverage.
+- It trades rarely (a handful of times a month).
+- With a very small balance, one trade may need more money than you have, so the bot skips everything.
+- Your PC must stay on. If it sleeps, only the exchange's stop protects you.
 
-```
-pip install -r requirements.txt
-python -m pytest -q
-```
+## Quick start
 
-## Run (live)
-
-1. Create a Delta live API key: Read + Trade, withdrawals OFF, IP-restricted if possible.
-2. Set environment variables (never in a file): `DELTA_API_KEY`, `DELTA_API_SECRET`, `DELTA_LIVE_CONFIRM=I_ACCEPT_THE_RISK`.
-3. `python bot.py selftest` (balance, position, price), then `python bot.py run`.
-4. A file named `STOP` next to `bot.py` blocks new trades. **Delete it to let the bot trade.**
-5. Keep the wallet small and turn Delta's auto top-up off.
+1. Install Python, then in this folder:
+   ```
+   pip install -r requirements.txt
+   python -m pytest -q
+   ```
+2. On Delta, create an API key with **Read + Trade** only (withdrawals OFF).
+3. Set these as environment variables (never put them in a file):
+   - `DELTA_API_KEY`
+   - `DELTA_API_SECRET`
+   - `DELTA_LIVE_CONFIRM=I_ACCEPT_THE_RISK`
+4. Check it works: `python bot.py selftest`
+5. Delete the file named `STOP` (it blocks trading), then: `python bot.py run`
 
 | Command | What it does |
 |---|---|
-| `run` | trade live |
-| `selftest` | check keys, signing, balance, position parsing |
-| `status` | show saved state |
-| `flatten` | close the position now |
-| `reset-halt` | clear a halt after review |
+| `python bot.py run` | start trading |
+| `python bot.py status` | show what the bot remembers |
+| `python bot.py flatten` | close the open trade now |
+| `python bot.py reset-halt` | restart after the bot paused itself |
 
-Logs: `bot.log`. Closed trades: `trades.csv`.
+**Emergency stop:** create a file named `STOP` next to `bot.py`. No new trades will open.
 
-## Settings (`config.json`, see `config.example.json`)
+## Settings
 
-| Key | Default | Meaning |
-|---|---|---|
-| `leverage` | 10 | max 20 |
-| `risk_per_trade_pct` | 8 | max loss at the stop, % of equity |
-| `margin_use_pct` | 75 | max margin, % of equity |
-| `target_equity_pct` | 20 | take-profit as % of equity (0 = scanner's 2R) |
-| `min_votes` | 2 | stages that must agree (1-5) |
-| `funding_hi` / `funding_lo` | 0.90 / 0.10 | funding rank thresholds for the vote |
-| `funding_lookback_bars` / `funding_min_history` | 2880 / 500 | 30 days of 15m samples / minimum needed to vote |
-| `daily_loss_limit_pct` | 15 | no new trades below this daily drawdown |
-| `max_consecutive_losses` | 4 | then halt |
-| `max_stop_pct` | 3 | skip wider setups |
+Copy `config.example.json` to `config.json` and edit. The important ones:
 
-## Safety rules (risk.py, tested)
-
-![Risk gates](docs/risk_gates.png)
-
-| Rule | Default |
+| Setting | Meaning |
 |---|---|
-| Liquidation must be >= 2x farther than the stop | skip otherwise |
-| Daily loss limit | -15% of the day's starting equity |
-| 4 losses in a row | halt until `reset-halt` |
-| Order timeout / unknown outcome | halt, never retry blindly |
-| 5 API failures in a row | no new trades |
-| A position the bot did not open | never touched |
-| Kill switch | `STOP` file |
+| `leverage` | borrowing multiplier (max 20) |
+| `risk_per_trade_pct` | most you can lose on one trade, % of your balance |
+| `margin_use_pct` | most of your balance used per trade |
+| `target_equity_pct` | take profit when a trade earns this % (0 = use the scanner's own target) |
+| `min_votes` | how many advisors must agree (default 2) |
 
-## Unverified (from Delta's docs, not a live test)
+## Built-in safety
 
-1. Signature is `method + timestamp + /v2/path + ?query + body`; `selftest` proves it.
-2. Position `size` is signed (negative = short).
-3. Wallet asset is `USD` (change `margin_asset` if selftest lists another).
-4. Product fields `id`, `contract_value` (0.001), `tick_size` (0.5).
-5. Bracket SL/TP is sent with the entry and exits as market orders (taker fees).
-6. **Funding:** the `FUNDING:BTCUSD` candle symbol, its units and sign (positive = longs pay) are untested live.
+![Safety checks](docs/risk_gates.png)
 
-Not modelled: funding payments while holding, news, trailing stops.
+The bot also pauses itself after 4 losses in a row, after a -15% day, or after 5 API errors in a row. It never touches a trade it did not open.
+
+## Not yet checked against the real exchange
+
+These come from Delta's documentation, not a live test. `selftest` checks most of them: signing, balance, position format. The **funding data** (`FUNDING:BTCUSD`) is the least certain; if it fails, that advisor just stays silent.
 
 ## Disclaimer
 
@@ -102,4 +84,4 @@ This software is provided "as is", without warranty of any kind. It is for educa
 
 ## Files
 
-`bot.py` loop and CLI - `scanner.py` stages 1-4 and the vote - `funding.py` stage 5 - `risk.py` limits - `exchanges.py` Delta orders and data - `delta_client.py` API - `docs/make_images.py` regenerates the images.
+`bot.py` main loop · `scanner.py` stages 1-4 and the voting · `funding.py` stage 5 · `risk.py` safety limits · `exchanges.py` / `delta_client.py` talk to Delta · `docs/make_images.py` redraws the pictures

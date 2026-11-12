@@ -2,14 +2,15 @@
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+plt.xkcd()   # hand-drawn look
 from matplotlib.patches import FancyBboxPatch
 
-BG, FG, ACC, UP, DN = "#0f172a", "#e2e8f0", "#38bdf8", "#22c55e", "#ef4444"
+BG, FG, ACC, UP, DN = "#fffdf5", "#222222", "#2563eb", "#16a34a", "#dc2626"
 
 
 def box(ax, x, y, w, h, text, color=ACC, fs=10):
     ax.add_patch(FancyBboxPatch((x, y), w, h, boxstyle="round,pad=0.02,rounding_size=0.15",
-                                fc="#1e293b", ec=color, lw=2))
+                                fc="#fff3c4", ec=color, lw=2))
     ax.text(x + w / 2, y + h / 2, text, ha="center", va="center", color=FG, fontsize=fs, fontweight="bold")
 
 
@@ -27,7 +28,7 @@ names = ["1 Trend\nHH+HL / LH+LL", "2 Break of\nStructure", "3 EMA\n20/50/200", 
 for i, n in enumerate(names):
     box(ax, 0.2 + i * 2.35, 2.5, 2.1, 1.1, n)
     ax.annotate("", xy=(1.25 + i * 2.35, 2.0), xytext=(1.25 + i * 2.35, 2.45), arrowprops=dict(arrowstyle="->", color=FG))
-box(ax, 3.2, 1.0, 5.6, 0.95, "count votes: LONG vs SHORT", color="#a78bfa", fs=12)
+box(ax, 3.2, 1.0, 5.6, 0.95, "count votes: LONG vs SHORT", color="#9333ea", fs=12)
 ax.annotate("", xy=(6, 0.75), xytext=(6, 0.98), arrowprops=dict(arrowstyle="->", color=FG))
 box(ax, 0.6, -0.05, 4.7, 0.8, ">= 2 agree and outvote  ->  TRADE", color=UP, fs=11)
 box(ax, 6.7, -0.05, 4.7, 0.8, "otherwise  ->  no trade", color=DN, fs=11)
@@ -42,7 +43,7 @@ cols = ["Trend", "BoS", "EMA", "Signal", "Funding", "Result"]
 rows = [([1, 1, 0, 0, 0], "LONG: 2 vs 0"), ([1, 1, 1, 1, 0], "LONG: 4 vs 0"),
         ([-1, 1, 0, 1, 0], "LONG: 2 vs 1"), ([1, 0, 0, 0, -1], "NO TRADE: 1 vs 1"),
         ([0, 0, 0, 1, 0], "NO TRADE: 1 vs 0")]
-sym = {1: ("L", UP), -1: ("S", DN), 0: ("-", "#64748b")}
+sym = {1: ("L", UP), -1: ("S", DN), 0: ("-", "#888888")}
 for j, c in enumerate(cols):
     ax.text(1.2 + j * 1.45, 4.05, c, ha="center", color=ACC, fontsize=11, fontweight="bold")
 for i, (v, res) in enumerate(rows):
@@ -51,7 +52,7 @@ for i, (v, res) in enumerate(rows):
         t, c = sym[x]
         ax.text(1.2 + j * 1.45, y, t, ha="center", va="center", color=c, fontsize=16, fontweight="bold")
     ax.text(1.2 + 5 * 1.45, y, res, ha="center", va="center", color=UP if "NO" not in res else DN, fontsize=10, fontweight="bold")
-ax.text(5, 0.05, "L = votes long   S = votes short   - = abstains", ha="center", color="#94a3b8", fontsize=9)
+ax.text(5, 0.05, "L = votes long   S = votes short   - = abstains", ha="center", color="#666666", fontsize=9)
 fig.savefig("docs/votes.png", dpi=150, facecolor=BG, bbox_inches="tight"); plt.close(fig)
 
 # 3. safety layers
