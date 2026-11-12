@@ -1,4 +1,4 @@
-"""5-stage strategy bot (trades when >= min_votes stages agree). LIVE ONLY: real money on Delta Exchange India.
+"""5-stage strategy bot (entry_mode: scanner | gated | vote). LIVE ONLY: real money on Delta Exchange India.
 Needs DELTA_API_KEY, DELTA_API_SECRET and DELTA_LIVE_CONFIRM=I_ACCEPT_THE_RISK in the environment.
 
   python bot.py run                 # trade live
@@ -191,6 +191,8 @@ class Bot:
     def _funding_vote(self, now):
         """Stage 5 vote. Any data problem -> 0 (no vote): the other four stages still decide."""
         r = self.cfg.risk
+        if r.entry_mode == "scanner":
+            return 0                                   # baseline mode ignores funding: no network call
         try:
             series = self.ex.funding_history(r.funding_lookback_bars + 1, now)
         except (DeltaError, UncertainError, KeyError, ValueError, AttributeError) as e:
@@ -232,7 +234,7 @@ class Bot:
         self.st["last_bar"] = closed_open
         df = df.reset_index(drop=True)
         res = S.scan(df, S.Config())
-        s = S.consensus(df, res, self._funding_vote(now), self.cfg.risk.min_votes)
+        s = S.consensus(df, res, self._funding_vote(now), self.cfg.risk.min_votes, self.cfg.risk.entry_mode)
         if s is None:
             return "no_signal"
         s["bar_open"] = closed_open

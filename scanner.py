@@ -317,31 +317,27 @@ def _agree(v, d, need):
     return n >= need and n > opp
 
 
-def consensus(df, res, funding=0, min_votes=2, cfg: Config | None = None):
-    """Signal dict when >= min_votes stages agree on a side (and outvote the other side) on the LAST bar,
-    and they did not already on the bar before (edge trigger: persistent trend+MA must not re-enter every bar).
-    Returns None otherwise."""
-    cfg = cfg or res.cfg
+def consensus(df, res, funding=0, min_votes=3, mode="scanner"):
+    """Entry decision on the LAST closed bar. Stage 4 (the scanner signal) is always the anchor.
+      scanner: the signal alone (the backtested baseline).
+      gated  : the signal, unless funding votes the OPPOSITE side (funding abstaining = allowed).
+      vote   : >= min_votes stages agree and outvote the other side, stage 4 is one of them, and the
+               vote set was not already agreeing on the previous bar (edge trigger).
+    Returns the signal dict (with "votes") or None."""
     i = len(df) - 1
-    now, prev = stage_votes(df, res, i, funding), stage_votes(df, res, i - 1, funding)
-    hit = [d for d in (1, -1) if _agree(now, d, min_votes) and not _agree(prev, d, min_votes)]
-    if len(hit) != 1:
-        return None
-    d = hit[0]
-    c = df["close"].to_numpy(float)
     sg = res.signals[res.signals["bar"] == i]
-    if len(sg) and sg["side"].iloc[-1] == ("LONG" if d == 1 else "SHORT"):
-        row = sg.iloc[-1].to_dict()
-    else:
-        hi_c, lo_c = res.pivot_highs + cfg.pivot_right, res.pivot_lows + cfg.pivot_right
-        h, l = df["high"].to_numpy(float), df["low"].to_numpy(float)
-        entry, stop, target, risk, tpct = geometry(d, i, c, res.atr, hi_c, h[res.pivot_highs], lo_c,
-                                                   l[res.pivot_lows], cfg)
-        if tpct < cfg.min_target_fee_mult * cfg.fee_rt_pct:
+    if sg.empty:
+        return None
+    row = sg.iloc[-1].to_dict()
+    d = 1 if row["side"] == "LONG" else -1
+    now = stage_votes(df, res, i, funding)
+    if mode == "gated" and funding == -d:
+        return None
+    if mode == "vote":
+        if not (_agree(now, d, min_votes) and now["signal"] == d):
             return None
-        row = {"time": df["time"].iloc[i] if "time" in df.columns else i, "bar": i,
-               "side": "LONG" if d == 1 else "SHORT", "kind": "consensus", "entry": entry, "stop": stop,
-               "target": target, "risk_pct": risk / entry * 100, "target_pct": tpct, "score": 0}
+        if _agree(stage_votes(df, res, i - 1, funding), d, min_votes):
+            return None
     row["votes"] = ",".join(k for k, x in now.items() if x == d)
     return row
 

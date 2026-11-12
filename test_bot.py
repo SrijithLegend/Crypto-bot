@@ -280,6 +280,6 @@ def test_target_price_nets_pct_of_equity():
     assert target_price(100.0, 1, 80000.0, 10, 20.0) > 80000.0 > target_price(100.0, -1, 80000.0, 10, 20.0)
 
 def test_bot_uses_equity_target(mkbot):
-    df, _ = signal_df(); b, ex = mkbot(df)
+    df, _ = signal_df(); b, ex = mkbot(df, Risk(max_stop_pct=50, risk_per_trade_pct=50, margin_use_pct=100, target_equity_pct=20.0))
     b.step(NOW0 + 6); o = ex.orders[0]; t = b.st["in_trade"]
     assert o["target"] == t["target"] == pytest.approx(target_price(12.94, o["side"], ex.mark, o["lots"], 20.0))

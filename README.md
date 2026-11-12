@@ -1,6 +1,6 @@
 # Crypto Bot: a 5-stage BTCUSD trading bot
 
-A bot that trades Bitcoin (BTCUSD) on **Delta Exchange India**. Every 15 minutes it looks at the latest candle, asks five simple "stages" what they think, and only trades when **at least two agree**.
+A bot that trades Bitcoin (BTCUSD) on **Delta Exchange India**. Every 15 minutes it looks at the latest candle, asks five simple "stages" what they think, and by default trades only on the main scanner's signal (the one setup with a measured edge); funding can veto it, or you can require several advisors to agree.
 
 > ⚠️ **It uses real money. There is no practice mode. You can lose everything you put in.** Read the [Disclaimer](#disclaimer) before running it.
 
@@ -18,7 +18,13 @@ Think of five advisors. Each one says **long** (price will go up), **short** (pr
 | 4. Continuation / reversal | the main scanner finds a full setup |
 | 5. Funding | too many traders are short (a crowd that is often wrong) |
 
-The bot trades only if **2 or more advisors agree** and fewer disagree.
+The bot has three **entry modes** (`entry_mode` in the config):
+
+| Mode | Trades when... |
+|---|---|
+| `scanner` (default) | advisor 4 (the scanner) fires. The tested baseline. |
+| `gated` | advisor 4 fires and funding does **not** vote the opposite way |
+| `vote` | at least `min_votes` (3+) advisors agree, and advisor 4 is one of them |
 
 ![Vote examples](docs/votes.png)
 
@@ -26,8 +32,11 @@ Every trade gets a **stop-loss** (exit if it goes wrong) and a **take-profit** (
 
 ## Before you run it
 
-- It has **not been proven to make money**. The older 4-stage version made +0.46% per trade over 48 trades, which is too few to be sure. The "2 of 5" rule and the funding stage have **not been backtested**.
-- The current `config.json` uses **20x leverage** and a **+20% take-profit**. When I replayed that on past data it **lost money**. Safer: `"target_equity_pct": 0` and 5-10x leverage.
+- **Nothing here is proven to make money.** Backtest, Jan-Oct 2026, 15m, no leverage, 2R target:
+  - scanner only: 47 trades, 40% wins, +0.50% per trade, but the 95% range is -0.16% to +1.22% (not proven).
+  - the old "any 2 of 5 agree" rule: 128 trades, +-0.12% per trade (**it lost money**), so it is no longer allowed (`min_votes` must be 3 or more).
+  - these figures come from one 10-month sample and were measured outside this repo; the backtest tooling is not in the repo yet, so they are not reproducible from here.
+- A +20%-of-equity take-profit at 20x replayed as a loser, so `target_equity_pct` now defaults to 0 (use the scanner's 2R target) and the bot warns if you set it too small. Defaults are 10x leverage, 8% risk per trade.
 - It trades rarely (a handful of times a month).
 - With a very small balance, one trade may need more money than you have, so the bot skips everything.
 - Your PC must stay on. If it sleeps, only the exchange's stop protects you.
@@ -58,15 +67,16 @@ Every trade gets a **stop-loss** (exit if it goes wrong) and a **take-profit** (
 
 ## Settings
 
-Copy `config.example.json` to `config.json` and edit. The important ones:
+Copy `config.example.json` to `config.json` and edit (`config.json` and `STOP` are git-ignored, so your live settings never get committed). The important ones:
 
 | Setting | Meaning |
 |---|---|
 | `leverage` | borrowing multiplier (max 20) |
 | `risk_per_trade_pct` | most you can lose on one trade, % of your balance |
 | `margin_use_pct` | most of your balance used per trade |
-| `target_equity_pct` | take profit when a trade earns this % (0 = use the scanner's own target) |
-| `min_votes` | how many advisors must agree (default 2) |
+| `target_equity_pct` | take profit when a trade earns this % (0 = use the scanner's own 2R target, recommended) |
+| `entry_mode` | `scanner`, `gated` or `vote` (see above) |
+| `min_votes` | `vote` mode only: advisors that must agree (3-5) |
 
 ## Built-in safety
 
@@ -84,4 +94,4 @@ This software is provided "as is", without warranty of any kind. It is for educa
 
 ## Files
 
-`bot.py` main loop · `scanner.py` stages 1-4 and the voting · `funding.py` stage 5 · `risk.py` safety limits · `exchanges.py` / `delta_client.py` talk to Delta · `docs/make_images.py` redraws the pictures
+`bot.py` main loop · `scanner.py` stages 1-4 and the entry modes · `funding.py` stage 5 · `risk.py` safety limits · `exchanges.py` / `delta_client.py` talk to Delta · `docs/make_images.py` redraws the pictures

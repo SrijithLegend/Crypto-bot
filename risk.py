@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import warnings
 from dataclasses import dataclass
 
 MAX_LEVERAGE = 20          # hard ceiling in code. Backtest: >=50x is liquidated on most trades.
@@ -15,14 +16,15 @@ class Risk:
     leverage: int = 10
     risk_per_trade_pct: float = 8.0      # max loss at the stop, % of equity (1 lot is ~6-7 % at Rs1,100)
     margin_use_pct: float = 75.0         # max % of equity used as margin (1 lot @10x ~ 62 % at Rs1,100)
-    target_equity_pct: float = 20.0      # take profit when the trade nets this % of equity (0 = use scanner's 2R target)
+    target_equity_pct: float = 0.0       # take profit when the trade nets this % of equity (0 = use scanner's 2R target)
     daily_loss_limit_pct: float = 15.0   # stop opening trades for the day below this
     max_consecutive_losses: int = 4      # then halt until you run `reset-halt`
     min_liq_buffer: float = 2.0          # liquidation distance must be >= this x stop distance
     max_stop_pct: float = 3.0            # skip setups whose stop is wider than this
     max_entry_drift_pct: float = 0.3     # skip if price moved this far from the signal price
     emergency_stop_slip_pct: float = 0.2 # software backup: flatten if price is this far past the stop
-    min_votes: int = 2                   # trade only when this many of the 5 stages agree on a side
+    entry_mode: str = "scanner"          # scanner (tested baseline) | gated (funding must not oppose) | vote
+    min_votes: int = 3                   # vote mode only: stages that must agree (stage 4 must be one of them)
     funding_hi: float = 0.90             # funding rank >= this votes SHORT (longs crowded)
     funding_lo: float = 0.10             # funding rank <= this votes LONG (shorts crowded)
     funding_lookback_bars: int = 2880    # 30 days of 15-minute funding samples
@@ -38,8 +40,15 @@ class Risk:
                 raise ValueError(f"{name} must be > 0")
         if self.margin_use_pct > 100:
             raise ValueError("margin_use_pct must be <= 100")
-        if not (1 <= self.min_votes <= 5):
-            raise ValueError("min_votes must be 1..5")
+        if self.entry_mode not in ("scanner", "gated", "vote"):
+            raise ValueError("entry_mode must be scanner, gated or vote")
+        if not (3 <= self.min_votes <= 5):
+            raise ValueError("min_votes must be 3..5 (the 2-of-5 rule lost money in the backtest)")
+        if self.target_equity_pct > 0:
+            move = self.target_equity_pct / (self.leverage * self.margin_use_pct / 100)   # price move needed, %
+            if move < 1.9:                                   # tested 2R target ~ 2 x 0.94% median stop
+                warnings.warn(f"target_equity_pct={self.target_equity_pct} needs only a ~{move:.2f}% price move, "
+                              f"less than the ~1.9% of the tested 2R target (median stop ~0.94%): this config replayed as a loser", stacklevel=2)
         if not (0.0 < self.funding_lo < self.funding_hi < 1.0):
             raise ValueError("need 0 < funding_lo < funding_hi < 1")
 
