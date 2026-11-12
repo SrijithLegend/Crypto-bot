@@ -228,28 +228,14 @@ def make_signals(df, cfg, events, trend, ms, e2, a, hi_idx, hi_px, lo_idx, lo_px
                 continue
         if t - last[d] < cfg.cooldown:
             continue
-        entry = float(c[t])
-        stop = np.nan
-        if d == 1:
-            k = int(np.searchsorted(lo_conf, t, side="right")) - 1
-            if k >= 0:
-                stop = lo_px[k] - cfg.stop_buf_atr * a[t]
-        else:
-            k = int(np.searchsorted(hi_conf, t, side="right")) - 1
-            if k >= 0:
-                stop = hi_px[k] + cfg.stop_buf_atr * a[t]
-        if not np.isfinite(stop) or (d == 1 and stop >= entry) or (d == -1 and stop <= entry):
-            stop = entry - d * cfg.fallback_stop_atr * a[t]
-        risk = abs(entry - stop)
-        target = entry + d * cfg.rr * risk
-        target_pct = cfg.rr * risk / entry * 100.0
+        entry, stop, target, risk, target_pct = geometry(d, t, c, a, hi_conf, hi_px, lo_conf, lo_px, cfg)
         fee_ok = target_pct >= cfg.min_target_fee_mult * cfg.fee_rt_pct
         if cfg.drop_fee_fail and not fee_ok:
             continue
         last[d] = t
         rows.append({
             "time": times[t], "bar": int(t), "side": "LONG" if d == 1 else "SHORT",
-            "kind": kind, "entry": entry, "stop": float(stop), "target": float(target),
+            "kind": kind, "entry": entry, "stop": stop, "target": target,
             "risk_pct": risk / entry * 100.0, "target_pct": target_pct, "fee_ok": bool(fee_ok),
             "trend_prev": tp, "ma_state": int(ms[t]), "level": float(lvl),
             "contacts": int(contacts), "score": 1 + int(ms[t] == d) + int(contacts >= 2),
@@ -257,6 +243,24 @@ def make_signals(df, cfg, events, trend, ms, e2, a, hi_idx, hi_px, lo_idx, lo_px
     cols = ["time", "bar", "side", "kind", "entry", "stop", "target", "risk_pct",
             "target_pct", "fee_ok", "trend_prev", "ma_state", "level", "contacts", "score"]
     return pd.DataFrame(rows, columns=cols)
+
+
+def geometry(d, t, c, a, hi_conf, hi_px, lo_conf, lo_px, cfg):
+    """Entry/stop/target for a trade in direction d on bar t (stop beyond the last confirmed swing)."""
+    entry = float(c[t])
+    stop = np.nan
+    if d == 1:
+        k = int(np.searchsorted(lo_conf, t, side="right")) - 1
+        if k >= 0:
+            stop = lo_px[k] - cfg.stop_buf_atr * a[t]
+    else:
+        k = int(np.searchsorted(hi_conf, t, side="right")) - 1
+        if k >= 0:
+            stop = hi_px[k] + cfg.stop_buf_atr * a[t]
+    if not np.isfinite(stop) or (d == 1 and stop >= entry) or (d == -1 and stop <= entry):
+        stop = entry - d * cfg.fallback_stop_atr * a[t]
+    risk = abs(entry - stop)
+    return entry, float(stop), entry + d * cfg.rr * risk, risk, cfg.rr * risk / entry * 100.0
 
 
 # ------------------------------------------------------------------ driver
@@ -294,6 +298,52 @@ def scan(df: pd.DataFrame, cfg: Config = Config()) -> Result:
     events, live = find_breaks(c, a, hi_idx, hi_px, lo_idx, lo_px, cfg)
     sig = make_signals(df, cfg, events, trend, ms, e2, a, hi_idx, hi_px, lo_idx, lo_px)
     return Result(cfg, trend, ms, e1, e2, e3, a, hi_idx, lo_idx, events, sig, live)
+
+
+# ------------------------------------------------ 5-stage consensus entry
+STAGES = ("trend", "bos", "ma", "signal", "funding")
+
+
+def stage_votes(df, res, i, funding=0):
+    """Direction (+1/-1/0) each of the 5 stages points to on bar i. Funding is passed in (contrarian vote)."""
+    ev = res.events[res.events["bar"] == i]["dir"].sum() if len(res.events) else 0
+    sg = res.signals[res.signals["bar"] == i]
+    return {"trend": int(res.trend[i]), "bos": int(np.sign(ev)), "ma": int(res.ma_state[i]),
+            "signal": 0 if sg.empty else (1 if sg["side"].iloc[-1] == "LONG" else -1), "funding": funding}
+
+
+def _agree(v, d, need):
+    n, opp = sum(x == d for x in v.values()), sum(x == -d for x in v.values())
+    return n >= need and n > opp
+
+
+def consensus(df, res, funding=0, min_votes=2, cfg: Config | None = None):
+    """Signal dict when >= min_votes stages agree on a side (and outvote the other side) on the LAST bar,
+    and they did not already on the bar before (edge trigger: persistent trend+MA must not re-enter every bar).
+    Returns None otherwise."""
+    cfg = cfg or res.cfg
+    i = len(df) - 1
+    now, prev = stage_votes(df, res, i, funding), stage_votes(df, res, i - 1, funding)
+    hit = [d for d in (1, -1) if _agree(now, d, min_votes) and not _agree(prev, d, min_votes)]
+    if len(hit) != 1:
+        return None
+    d = hit[0]
+    c = df["close"].to_numpy(float)
+    sg = res.signals[res.signals["bar"] == i]
+    if len(sg) and sg["side"].iloc[-1] == ("LONG" if d == 1 else "SHORT"):
+        row = sg.iloc[-1].to_dict()
+    else:
+        hi_c, lo_c = res.pivot_highs + cfg.pivot_right, res.pivot_lows + cfg.pivot_right
+        h, l = df["high"].to_numpy(float), df["low"].to_numpy(float)
+        entry, stop, target, risk, tpct = geometry(d, i, c, res.atr, hi_c, h[res.pivot_highs], lo_c,
+                                                   l[res.pivot_lows], cfg)
+        if tpct < cfg.min_target_fee_mult * cfg.fee_rt_pct:
+            return None
+        row = {"time": df["time"].iloc[i] if "time" in df.columns else i, "bar": i,
+               "side": "LONG" if d == 1 else "SHORT", "kind": "consensus", "entry": entry, "stop": stop,
+               "target": target, "risk_pct": risk / entry * 100, "target_pct": tpct, "score": 0}
+    row["votes"] = ",".join(k for k, x in now.items() if x == d)
+    return row
 
 
 def summarize(df: pd.DataFrame, res: Result) -> dict:

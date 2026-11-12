@@ -53,6 +53,25 @@ class DeltaExchange:
     def mark_price(self) -> float:
         return float(self.public.get_ticker(self.symbol)["mark_price"])
 
+    def funding_history(self, bars: int, now: float) -> list:
+        """Funding samples oldest -> newest from FUNDING:<symbol> 15m candles (CLOSED only).
+        Only the current value's rank inside this history is used, so units don't matter."""
+        secs = RES_SECONDS["15m"]
+        end, rows, cur = int(now), {}, int(now) - bars * secs
+        while cur < end:
+            nxt = min(end, cur + 1500 * secs)
+            j = self.public.request("GET", "/history/candles",
+                                    params={"resolution": "15m", "symbol": f"FUNDING:{self.symbol}",
+                                            "start": cur, "end": nxt})
+            for c in j.get("result", []):
+                rows[int(c["time"])] = c
+            cur = nxt
+        vals = [float(rows[t]["close"]) for t in sorted(rows)
+                if rows[t].get("close") is not None and t + secs <= end]
+        if not vals:
+            raise DeltaError("no funding candles returned")
+        return vals
+
     def set_leverage(self, lev: int):
         self.c.set_leverage(self.product_id, lev)
 

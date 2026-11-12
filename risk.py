@@ -22,6 +22,11 @@ class Risk:
     max_stop_pct: float = 3.0            # skip setups whose stop is wider than this
     max_entry_drift_pct: float = 0.3     # skip if price moved this far from the signal price
     emergency_stop_slip_pct: float = 0.2 # software backup: flatten if price is this far past the stop
+    min_votes: int = 2                   # trade only when this many of the 5 stages agree on a side
+    funding_hi: float = 0.90             # funding rank >= this votes SHORT (longs crowded)
+    funding_lo: float = 0.10             # funding rank <= this votes LONG (shorts crowded)
+    funding_lookback_bars: int = 2880    # 30 days of 15-minute funding samples
+    funding_min_history: int = 500       # fewer samples -> funding casts no vote
 
     def validate(self):
         if not (1 <= self.leverage <= MAX_LEVERAGE):
@@ -33,6 +38,10 @@ class Risk:
                 raise ValueError(f"{name} must be > 0")
         if self.margin_use_pct > 100:
             raise ValueError("margin_use_pct must be <= 100")
+        if not (1 <= self.min_votes <= 5):
+            raise ValueError("min_votes must be 1..5")
+        if not (0.0 < self.funding_lo < self.funding_hi < 1.0):
+            raise ValueError("need 0 < funding_lo < funding_hi < 1")
 
 
 def target_price(equity: float, side: int, entry: float, lots: int, pct: float, contract_value: float = 0.001) -> float:

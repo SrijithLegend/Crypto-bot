@@ -1,4 +1,4 @@
-"""4-stage strategy bot. LIVE ONLY: real money on Delta Exchange India.
+"""5-stage strategy bot (trades when >= min_votes stages agree). LIVE ONLY: real money on Delta Exchange India.
 Needs DELTA_API_KEY, DELTA_API_SECRET and DELTA_LIVE_CONFIRM=I_ACCEPT_THE_RISK in the environment.
 
   python bot.py run                 # trade live
@@ -20,6 +20,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 
 import scanner as S
+from funding import funding_vote
 from delta_client import PROD, DeltaClient, DeltaError, UncertainError
 from exchanges import DeltaExchange
 from risk import Risk, plan_trade, target_price
@@ -187,6 +188,18 @@ class Bot:
             self.st.save()
         return "entered"
 
+    def _funding_vote(self, now):
+        """Stage 5 vote. Any data problem -> 0 (no vote): the other four stages still decide."""
+        r = self.cfg.risk
+        try:
+            series = self.ex.funding_history(r.funding_lookback_bars + 1, now)
+        except (DeltaError, UncertainError, KeyError, ValueError, AttributeError) as e:
+            log.warning("funding data unavailable (%s) - funding casts no vote", e)
+            return 0
+        v, rank = funding_vote(series, r.funding_hi, r.funding_lo, r.funding_min_history)
+        log.info("FUNDING rank=%.2f vote=%+d", rank, v)
+        return v
+
     # --------------------------------------------------------------- main step
     def step(self, now: float) -> str:
         self._roll_day(now)
@@ -217,13 +230,13 @@ class Bot:
                 return "stale_skipped"
             return "stale_retry"
         self.st["last_bar"] = closed_open
-        res = S.scan(df.reset_index(drop=True), S.Config())
-        sig = res.signals[res.signals["bar"] == len(df) - 1]
-        if sig.empty:
+        df = df.reset_index(drop=True)
+        res = S.scan(df, S.Config())
+        s = S.consensus(df, res, self._funding_vote(now), self.cfg.risk.min_votes)
+        if s is None:
             return "no_signal"
-        s = sig.iloc[-1].to_dict()
         s["bar_open"] = closed_open
-        log.info("SIGNAL %s %s score=%s entry=%.1f stop=%.1f target=%.1f", s["side"], s["kind"], s["score"],
+        log.info("SIGNAL %s %s votes=[%s] entry=%.1f stop=%.1f target=%.1f", s["side"], s["kind"], s["votes"],
                  s["entry"], s["stop"], s["target"])
         return self._try_enter(s, now)
 
