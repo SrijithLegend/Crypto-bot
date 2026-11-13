@@ -79,3 +79,53 @@ def funding_signal(cur, hist, c=CFG):
     elif cur <= -c["funding_abs_min"] and z <= -c["funding_z_min"]:
         crowded = "short"
     return dict(rate=cur, z=z, crowded=crowded)
+
+
+# ------------------------------------------------------------------ signal 3: estimated liquidation heatmap
+def build_heatmap(oi_val, bars, c=CFG):
+    b = c["bucket_usd"]
+    longs, shorts = {}, {}             # {bucket_price: notional_usd}
+
+    for i in range(1, len(oi_val)):
+        d = oi_val[i] - oi_val[i - 1]
+        px = bars[i]["close"]
+
+        if d > 0:                       # new positions opened
+            for lev, wt in c["leverage_tiers"].items():
+                n = d * wt
+                lp = round(px * (1 - 1 / lev + c["mmr"]) / b) * b
+                sp = round(px * (1 + 1 / lev - c["mmr"]) / b) * b
+                longs[lp] = longs.get(lp, 0.0) + n * c["long_share"]
+                shorts[sp] = shorts.get(sp, 0.0) + n * (1 - c["long_share"])
+        elif d < 0:                     # positions closed: shrink everything
+            k = 1 + d / oi_val[i - 1]
+            for book in (longs, shorts):
+                for key in book:
+                    book[key] *= k
+
+        for key in [k for k in longs if k >= bars[i]["low"]]:    # long liqs already hit
+            del longs[key]
+        for key in [k for k in shorts if k <= bars[i]["high"]]:  # short liqs already hit
+            del shorts[key]
+
+    return longs, shorts
+
+
+def _zone(book, lo, hi, far_lo, far_hi):
+    near = sum(v for k, v in book.items() if lo < k <= hi)
+    far = sum(v for k, v in book.items() if far_lo < k <= far_hi)
+    far_scaled = far * (hi - lo) / (far_hi - far_lo)   # normalise to the same width
+    ratio = near / far_scaled if far_scaled > 0 else (math.inf if near > 0 else 0.0)
+    return near, ratio
+
+
+def cluster_signal(longs, shorts, px, oi_total, c=CFG):
+    p, fp = c["cluster_pct"], c["cluster_far_pct"]
+    up_n, up_r = _zone(shorts, px, px * (1 + p), px * (1 + p), px * (1 + fp))
+    dn_n, dn_r = _zone(longs, px * (1 - p), px, px * (1 - fp), px * (1 - p))
+    floor = c["cluster_min_oi_share"] * oi_total
+    return dict(
+        up_notional=up_n, up_ratio=up_r, down_notional=dn_n, down_ratio=dn_r,
+        short_cluster_above=(up_n >= floor and up_r >= c["cluster_ratio_min"]),
+        long_cluster_below=(dn_n >= floor and dn_r >= c["cluster_ratio_min"]),
+    )
