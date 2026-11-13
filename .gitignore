@@ -8,3 +8,4 @@ __pycache__/
 data/
 *.tmp
 .env
+cascade_log.csv

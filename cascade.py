@@ -129,3 +129,58 @@ def cluster_signal(longs, shorts, px, oi_total, c=CFG):
         short_cluster_above=(up_n >= floor and up_r >= c["cluster_ratio_min"]),
         long_cluster_below=(dn_n >= floor and dn_r >= c["cluster_ratio_min"]),
     )
+
+
+# ------------------------------------------------------------------ combine + run loop
+def combine(s_oi, s_f, s_c, c=CFG):
+    fb = c["flat_band"]
+    long_side = [
+        s_oi["spike"] and s_oi["price_ret"] >= -fb,   # OI up, price flat/rising
+        s_f["crowded"] == "long",
+        s_c["long_cluster_below"],
+    ]
+    short_side = [
+        s_oi["spike"] and s_oi["price_ret"] <= fb,    # OI up, price flat/falling
+        s_f["crowded"] == "short",
+        s_c["short_cluster_above"],
+    ]
+    return {"DOWN_CASCADE_RISK": sum(long_side), "UP_SQUEEZE_RISK": sum(short_side)}
+
+
+def evaluate():
+    oi_val, bars, fhist, fcur = fetch_data()
+    s_oi = oi_signal(oi_val, bars)
+    s_f = funding_signal(fcur, fhist)
+    longs, shorts = build_heatmap(oi_val, bars)
+    s_c = cluster_signal(longs, shorts, bars[-1]["close"], oi_val[-1])
+    return dict(ts=int(time.time()), price=bars[-1]["close"],
+                oi_chg=s_oi["oi_chg"], oi_z=s_oi["z"], price_ret=s_oi["price_ret"],
+                funding=s_f["rate"], funding_z=s_f["z"], crowded=s_f["crowded"],
+                up_ratio=s_c["up_ratio"], down_ratio=s_c["down_ratio"],
+                **combine(s_oi, s_f, s_c))
+
+
+def log_row(row, path="cascade_log.csv"):
+    new = not os.path.exists(path)
+    with open(path, "a", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=row.keys())
+        if new:
+            w.writeheader()
+        w.writerow(row)
+
+
+def delta_btc():
+    """Optional: Delta's own BTC mark price + OI value, to compare with Binance."""
+    r = requests.get("https://api.india.delta.exchange/v2/tickers/BTCUSD", timeout=10).json()["result"]
+    return float(r["mark_price"]), float(r["oi_value"])
+
+
+if __name__ == "__main__":
+    while True:
+        try:
+            row = evaluate()
+            log_row(row)
+            print(row)
+        except Exception as e:             # never let a data hiccup kill the loop
+            print("error:", e)
+        time.sleep(300)                    # signals use 5m bars; no point polling faster

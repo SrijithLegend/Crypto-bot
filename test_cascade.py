@@ -47,3 +47,25 @@ def test_cluster_signal_dense_near_zone():
     assert s["long_cluster_below"] and not s["short_cluster_above"]
     s = C.cluster_signal(longs, {}, px, oi_total=1e9)             # below 1% OI-share floor
     assert not s["long_cluster_below"]
+
+
+def _oi(spike=False, price_ret=0.0):
+    return dict(spike=spike, price_ret=price_ret)
+
+
+def test_combine_mirror_logic():
+    f_long, f_none = dict(crowded="long"), dict(crowded=None)
+    c_down = dict(long_cluster_below=True, short_cluster_above=False)
+    r = C.combine(_oi(True, 0.001), f_long, c_down)
+    assert r == {"DOWN_CASCADE_RISK": 3, "UP_SQUEEZE_RISK": 1}    # spike counts for both flat-band sides
+    r = C.combine(_oi(True, -0.01), f_long, c_down)               # price fell past band: OI leg fails for longs
+    assert r["DOWN_CASCADE_RISK"] == 2 and r["UP_SQUEEZE_RISK"] == 1
+    assert C.combine(_oi(), f_none, dict(long_cluster_below=False, short_cluster_above=False)) == \
+        {"DOWN_CASCADE_RISK": 0, "UP_SQUEEZE_RISK": 0}
+
+
+def test_log_row_writes_header_once(tmp_path):
+    p = str(tmp_path / "l.csv")
+    C.log_row({"a": 1, "b": 2}, p)
+    C.log_row({"a": 3, "b": 4}, p)
+    assert open(p).read().split() == ["a,b", "1,2", "3,4"]
