@@ -95,3 +95,11 @@ This software is provided "as is", without warranty of any kind. It is for educa
 ## Files
 
 `bot.py` main loop · `scanner.py` stages 1-4 and the entry modes · `funding.py` stage 5 · `risk.py` safety limits · `exchanges.py` / `delta_client.py` talk to Delta · `docs/make_images.py` redraws the pictures
+
+## Cascade-risk flag (`cascade.py`)
+
+Logs a liquidation-cascade risk score (0-3 per side) from Binance public data. **A risk flag, not an entry signal** - see `claude.md` for the spec and caveats.
+
+    python cascade.py       # appends a reading to cascade_log.csv every 5 min
+
+Run it for weeks, then backtest the log before using it as a filter in the bot (`claude.md` section 6). It is not wired into `bot.py`.
